@@ -231,11 +231,11 @@ gen_filter(Index, Field, StartTerm, EndTerm, Size) ->
     end.
 
 %% @private
-update_tf(TF, [{IFT,_}|Postings], {undefined, 0}) ->
+update_tf(TF, [{IFT,_,_,_}|Postings], {undefined, 0}) ->
     update_tf(TF, Postings, {IFT, 1});
-update_tf(TF, [{IFT,_}|Postings], {IFT, Frequency}) ->
+update_tf(TF, [{IFT,_,_,_}|Postings], {IFT, Frequency}) ->
     update_tf(TF, Postings, {IFT, Frequency + 1});
-update_tf(TF, [{IFT,_}|Postings], {LastIFT, Frequency}) ->
+update_tf(TF, [{IFT,_,_,_}|Postings], {LastIFT, Frequency}) ->
     mi_tf:delta(TF, LastIFT, Frequency),
     update_tf(TF, Postings, {IFT, 1});
 update_tf(TF, [], {IFT, Frequency}) ->
