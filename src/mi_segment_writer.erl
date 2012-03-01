@@ -93,10 +93,10 @@ update_tf(IFT, W=#writer{tf_temp=Temp}) ->
     W#writer{tf_temp=mi_tf:temp_delta(Temp, IFT, 1)}.
 
 flush_tf(W=#writer{tf_temp=Temp}, false) ->
-    {_, Temp2} = mi_tf:flush(Temp, false),
+    {_, Temp2} = mi_tf:temp_flush(Temp, false),
     W#writer{tf_temp=Temp2};
 flush_tf(W=#writer{tf_temp=Temp}, true) ->
-    {flush, Temp2} = mi_tf:flush(Temp, true),
+    {flush, Temp2} = mi_tf:temp_flush(Temp, true),
     W#writer{tf_temp=Temp2}.
 
 %% from_iterator/4 - responsible for taking an iterator,
