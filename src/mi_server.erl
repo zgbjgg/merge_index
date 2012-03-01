@@ -202,7 +202,7 @@ handle_call({index, Postings}, _From, State) ->
 
             %% Create a new empty buffer...
             BName = join(NewState, "buffer." ++ integer_to_list(NextID)),
-            NewBuffer = mi_buffer:new(BName),
+            NewBuffer = mi_buffer:new(BName, TF),
 
             NewState1 = NewState#state {
                 buffers=[NewBuffer|NewState#state.buffers],
@@ -372,14 +372,15 @@ handle_call(is_empty, _From, State) ->
     {reply, IsEmpty, State};
 
 %% TODO what about resetting next_id?
+%% TODO actually need to drop term-freq data
 handle_call(drop, _From, State) ->
-    #state { buffers=Buffers, segments=Segments } = State,
+    #state { buffers=Buffers, segments=Segments, tf=TF } = State,
 
     %% Delete files, reset state...
     [mi_buffer:delete(X) || X <- Buffers],
     [mi_segment:delete(X) || X <- Segments],
     BufferFile = join(State, "buffer.1"),
-    Buffer = mi_buffer:new(BufferFile),
+    Buffer = mi_buffer:new(BufferFile, TF),
     NewState = State#state { locks = mi_locks:new(),
                              buffers = [Buffer],
                              segments = [],
@@ -589,10 +590,10 @@ read_segments([SName|Rest], TF, Segments) ->
     Segment = mi_segment:open_read(SName, TF),
     [Segment|read_segments(Rest, TF, Segments)].
 
-read_buffers(Root, [], NextID, Segments, _TF) ->
+read_buffers(Root, [], NextID, Segments, TF) ->
     %% No latest buffer exists, open a new one...
     BName = join(Root, "buffer." ++ integer_to_list(NextID)),
-    Buffer = mi_buffer:new(BName),
+    Buffer = mi_buffer:new(BName, TF),
     {NextID + 1, Buffer, Segments};
 
 read_buffers(_Root, [{_BNum, BName}], NextID, Segments, TF) ->
@@ -605,10 +606,10 @@ read_buffers(Root, [{BNum, BName}|Rest], NextID, Segments, TF) ->
     lager:debug("converting buffer: '~s' to segment", [BName]),
     SName = join(Root, "segment." ++ integer_to_list(BNum)),
     set_deleteme_flag(SName),
-    Buffer = mi_buffer:new(BName),
+    Buffer = mi_buffer:new(BName, TF),
     mi_buffer:close_filehandle(Buffer),
     SegmentWO = mi_segment:open_write(SName),
-    mi_segment:from_buffer(Buffer, SegmentWO, TF),
+    mi_segment:from_buffer(Buffer, SegmentWO),
     mi_buffer:delete(Buffer),
     clear_deleteme_flag(mi_segment:filename(SegmentWO)),
     SegmentRO = mi_segment:open_read(SName),
