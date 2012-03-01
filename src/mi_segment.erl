@@ -31,6 +31,7 @@
     filesize/1,
     delete/1,
     data_file/1,
+    tf_file/1,
     offsets_file/1,
     from_buffer/2,
     from_iterator/2,
@@ -66,6 +67,7 @@ open_read(Root) ->
             {ok, FileInfo} = file:read_file_info(data_file(Root)),
 
             OffsetsTable = read_offsets(Root),
+
             lager:debug("opened segment '~s' for read", [Root]),
             #segment {
                        root=Root,
@@ -107,7 +109,6 @@ delete(Segment) ->
 
 %% Create a segment from a Buffer (see mi_buffer.erl)
 from_buffer(Buffer, Segment) ->
-    %% Open the iterator...
     Iterator = mi_buffer:iterator(Buffer),
     mi_segment_writer:from_iterator(Iterator, Segment).
 
@@ -422,6 +423,11 @@ data_file(Segment) when is_record(Segment, segment) ->
     data_file(Segment#segment.root);
 data_file(Root) ->
     Root ++ ".data".
+
+tf_file(Segment) when is_record(Segment, segment) ->
+    tf_file(Segment#segment.root);
+tf_file(Root) ->
+    Root ++ ".tf".
 
 offsets_file(Segment) when is_record(Segment, segment) ->
     offsets_file(Segment#segment.root);
