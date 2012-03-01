@@ -16,7 +16,8 @@
                                   | eof
                                   | {error, Reason::any()})).
 
--type(mi_instance()) :: atom().
+-type(mi_ift() :: {index(), field(), mi_term()}).
+-type(mi_instance() :: atom()).
 
 %%%===================================================================
 %%% Records
