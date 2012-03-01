@@ -3,6 +3,7 @@
 -export([delta/3,
          free/1,
          get/2,
+         load_file/2,
          new/1,
          temp/1,
          temp_close/1,
@@ -11,9 +12,10 @@
          temp_size/1]).
 -include("merge_index.hrl").
 -define(TF_BUFFER_SIZE, 100).
--define(PREAMBLE, <<"mi_tf">>).
+-define(PREAMBLE, "mi_tf").
 -define(VERSION, 1).
 -define(OPTIONS, 0).
+-define(PREAMBLE_LEN, 8).
 
 -opaque mi_tf_temp() :: {mi_tf_temp, dict(), file:fd()}.
 -export_type([mi_tf_temp/0]).
@@ -55,6 +57,15 @@ free(Instance) ->
 get(Instance, Term) ->
     [{Term,Frequency}] = ets:lookup(Instance, Term),
     Frequency.
+
+%% @doc Load term-frequency entries from `Filename' and update
+%% `Instance'.
+-spec load_file(mi_instance(), file:filename()) -> ok.
+
+load_file(Instance, Filename) ->
+    {ok, File} = file:open(Filename, [read, raw, read_ahead, binary]),
+    {_Vsn, _Opts} = read_preamble(File),
+    ok = load_entries(Instance, File).
 
 %% @doc Create a new term-frequency index under the given `Instance'
 %% name.
@@ -115,6 +126,11 @@ temp_size({mi_tf_temp, Temp, _}) ->
 %%% Private
 %%%===================================================================
 
+read_preamble(File) ->
+    {ok, Data} = file:read(File, ?PREAMBLE_LEN),
+    <<?PREAMBLE,Vsn:8/integer-unsigned,Opts:16/integer-unsigned>> = Data,
+    {Vsn, Opts}.
+
 write(Temp, File) ->
     dict:fold(write_entry(File), ok, Temp).
 
@@ -130,8 +146,26 @@ make_entry(Term, Frequency) when is_binary(Term) ->
     Len = size(Term) + 8,
     [<<Len:16/integer,Term/binary,Frequency:64/integer>>].
 
+load_entries(Instance, File) ->
+    case file:read(File, 2) of
+        {ok, <<Len:16/integer-unsigned>>} ->
+            ok = load_entry(Instance, File, Len),
+            ok = load_entries(Instance, File);
+        eof ->
+            ok
+    end.
+
+load_entry(Instance, File, Len) ->
+    TermLen = Len - 8,
+    case file:read(File, Len) of
+        {ok, <<Term:TermLen/binary,Frequency:64/integer-unsigned>>} ->
+            delta(Instance, Term, Frequency);
+        eof ->
+            {corrupted_tf_file, implement_tf_rebuild}
+    end.
+
 write_preamble(File) ->
-    Bin = <<?PREAMBLE/binary,?VERSION:8/integer,?OPTIONS:16/integer>>,
+    Bin = <<?PREAMBLE,?VERSION:8/integer,?OPTIONS:16/integer>>,
     ok = file:write(File, Bin).
 
 %%%===================================================================

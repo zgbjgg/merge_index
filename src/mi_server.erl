@@ -60,7 +60,8 @@
     lookup_range_pids,
     buffer_rollover_size,
     converter,
-    to_convert
+    to_convert,
+    tf
 }).
 
 -record(stream_range, {
@@ -127,18 +128,16 @@ stop(Server) ->
 
 init([Root]) ->
     lager:debug("loading merge_index '~s'", [Root]),
-    %% Seed the random generator...
     random:seed(now()),
 
-    %% Load from disk...
+    TF = mi_tf:new(list_to_atom(Root)),
     filelib:ensure_dir(join(Root, "ignore")),
-    {NextID, Buffer, Segments} = read_buf_and_seg(Root),
+    {NextID, Buffer, Segments} = read_buf_and_seg(Root, TF),
 
     %% trap exits so compaction and stream/range spawned processes
     %% don't pull down this merge_index if they fail
     process_flag(trap_exit, true),
 
-    %% Create the state...
     State = #state {
         root     = Root,
         locks    = mi_locks:new(),
@@ -148,7 +147,8 @@ init([Root]) ->
         is_compacting = false,
         lookup_range_pids = [],
         buffer_rollover_size=fuzzed_rollover_size(),
-        to_convert = queue:new()
+        to_convert = queue:new(),
+        tf = TF
     },
 
     lager:debug("finished loading merge_index '~s' with rollover size ~p",
@@ -160,7 +160,8 @@ handle_call({index, Postings}, _From, State) ->
     #state { buffers=[CurrentBuffer0|Buffers],
              converter=Converter,
              to_convert=ToConvert,
-             root=Root} = State,
+             root=Root,
+             tf=TF} = State,
 
     %% By multiplying the timestamp by -1 and swapping order of TS and
     %% props, we can take advantage of the natural ordering of
@@ -174,7 +175,7 @@ handle_call({index, Postings}, _From, State) ->
                 {{Index, Field, Term}, Value, -1 * Tstamp, Props}
         end,
     Postings1 = [F(X) || X <- Postings],
-    CurrentBuffer = mi_buffer:write(Postings1, CurrentBuffer0),
+    CurrentBuffer = mi_buffer:write(Postings1, CurrentBuffer0, TF),
 
     %% Update the state...
     NewState = State#state {buffers = [CurrentBuffer | Buffers]},
@@ -554,8 +555,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal
 %%%===================================================================
 
-%% Return {Buffers, Segments}, after cleaning up/repairing any partially merged buffers.
-read_buf_and_seg(Root) ->
+%% Return {Buffers, Segments}, after cleaning up/repairing any
+%% partially merged buffers.
+read_buf_and_seg(Root, TF) ->
     %% Delete any files that have a ?DELETEME_FLAG flag. This means that
     %% the system stopped before proper cleanup.
     F1 = fun(Filename) ->
@@ -569,37 +571,36 @@ read_buf_and_seg(Root) ->
     %% Open the segments...
     SegmentFiles = filelib:wildcard(join(Root, "segment.*.data")),
     SegmentFiles1 = [filename:join(Root, filename:basename(X, ".data")) || X <- SegmentFiles],
-    Segments = read_segments(SegmentFiles1, []),
+    Segments = read_segments(SegmentFiles1, TF, []),
 
     %% Get buffer files, calculate the next_id, load the buffers, turn
     %% any extraneous buffers into segments...
     BufferFiles = filelib:wildcard(join(Root, "buffer.*")),
     BufferFiles1 = lists:sort([{mi_buffer:id(X), X} || X <- BufferFiles]),
     NextID = lists:max([X || {X, _} <- BufferFiles1] ++ [0]) + 1,
-    {NextID1, Buffer, Segments1} = read_buffers(Root, BufferFiles1, NextID, Segments),
+    {NextID1, Buffer, Segments1} = read_buffers(Root, BufferFiles1, NextID, Segments, TF),
 
-    %% Return...
     {NextID1, Buffer, Segments1}.
 
-read_segments([], _Segments) -> [];
-read_segments([SName|Rest], Segments) ->
+read_segments([], _, _Segments) -> [];
+read_segments([SName|Rest], TF, Segments) ->
     %% Read the segment from disk...
     lager:debug("opening segment: '~s'", [SName]),
-    Segment = mi_segment:open_read(SName),
-    [Segment|read_segments(Rest, Segments)].
+    Segment = mi_segment:open_read(SName, TF),
+    [Segment|read_segments(Rest, TF, Segments)].
 
-read_buffers(Root, [], NextID, Segments) ->
+read_buffers(Root, [], NextID, Segments, _TF) ->
     %% No latest buffer exists, open a new one...
     BName = join(Root, "buffer." ++ integer_to_list(NextID)),
     Buffer = mi_buffer:new(BName),
     {NextID + 1, Buffer, Segments};
 
-read_buffers(_Root, [{_BNum, BName}], NextID, Segments) ->
+read_buffers(_Root, [{_BNum, BName}], NextID, Segments, TF) ->
     %% This is the final buffer file... return it as the open buffer...
-    Buffer = mi_buffer:new(BName),
+    Buffer = mi_buffer:new(BName, TF),
     {NextID, Buffer, Segments};
 
-read_buffers(Root, [{BNum, BName}|Rest], NextID, Segments) ->
+read_buffers(Root, [{BNum, BName}|Rest], NextID, Segments, TF) ->
     %% Multiple buffers exist... convert them into segments...
     lager:debug("converting buffer: '~s' to segment", [BName]),
     SName = join(Root, "segment." ++ integer_to_list(BNum)),
@@ -607,13 +608,12 @@ read_buffers(Root, [{BNum, BName}|Rest], NextID, Segments) ->
     Buffer = mi_buffer:new(BName),
     mi_buffer:close_filehandle(Buffer),
     SegmentWO = mi_segment:open_write(SName),
-    mi_segment:from_buffer(Buffer, SegmentWO),
+    mi_segment:from_buffer(Buffer, SegmentWO, TF),
     mi_buffer:delete(Buffer),
     clear_deleteme_flag(mi_segment:filename(SegmentWO)),
     SegmentRO = mi_segment:open_read(SName),
 
-    %% Loop...
-    read_buffers(Root, Rest, NextID, [SegmentRO|Segments]).
+    read_buffers(Root, Rest, NextID, [SegmentRO|Segments], TF).
 
 %% Merge-sort the results from Iterators, and stream to the pid.
 lookup(Index, Field, Term, Filter, Pid, Ref, Buffers, Segments) ->

@@ -24,7 +24,7 @@
 -author("Rusty Klophaus <rusty@basho.com>").
 -include("merge_index.hrl").
 -export([
-    new/1,
+    new/2,
     filename/1,
     id/1,
     exists/1,
@@ -32,7 +32,7 @@
     delete/1,
     filesize/1,
     size/1,
-    write/2,
+    write/3,
     info/4,
     iterator/1, iterator/4, iterators/6
 ]).
@@ -48,7 +48,7 @@
 %%% sorted iterator.
 
 %% Open a new buffer. Returns a buffer structure.
-new(Filename) ->
+new(Filename, TF) ->
     %% Open the existing buffer file...
     filelib:ensure_dir(Filename),
     {ok, DelayedWriteSize} = application:get_env(merge_index, buffer_delayed_write_size),
@@ -59,18 +59,19 @@ new(Filename) ->
 
     %% Read into an ets table...
     Table = ets:new(buffer, [duplicate_bag, public]),
-    open_inner(FH, Table, Filename),
+    open_inner(FH, Table, Filename, TF),
     {ok, Size} = file:position(FH, cur),
 
     lager:debug("opened buffer '~s'", [Filename]),
     %% Return the buffer.
     #buffer { filename=Filename, handle=FH, table=Table, size=Size }.
 
-open_inner(FH, Table, Filename) ->
+open_inner(FH, Table, Filename, TF) ->
     case read_value(FH, Filename) of
-        {ok, Postings} ->
-            write_to_ets(Table, Postings),
-            open_inner(FH, Table, Filename);
+        {ok, {Key,_,_,_}=Posting} ->
+            write_to_ets(Table, Posting),
+            mi_tf:delta(TF, Key, 1),
+            open_inner(FH, Table, Filename, TF);
         eof ->
             ok
     end.
@@ -100,15 +101,13 @@ filesize(Buffer) ->
 size(Buffer) ->
     ets:info(Buffer#buffer.table, size).
 
-write(Postings, Buffer) ->
-    %% Write to file...
+write(Postings, Buffer, TF) ->
     FH = Buffer#buffer.handle,
     BytesWritten = write_to_file(FH, Postings),
 
-    %% Return a new buffer with a new tree and size...
     write_to_ets(Buffer#buffer.table, Postings),
+    update_tf(TF, Postings, {undefined, 0}),
 
-    %% Return the new buffer.
     Buffer#buffer {
         size = (BytesWritten + Buffer#buffer.size)
     }.
@@ -230,3 +229,15 @@ gen_filter(Index, Field, StartTerm, EndTerm, Size) ->
             SizeFun = fun({_, _, KeyTerm}) -> erlang:size(KeyTerm) == Size end,
             fun(Key) -> StartFun(Key) andalso EndFun(Key) andalso SizeFun(Key) end
     end.
+
+%% @private
+update_tf(TF, [{IFT,_}|Postings], {undefined, 0}) ->
+    update_tf(TF, Postings, {IFT, 1});
+update_tf(TF, [{IFT,_}|Postings], {IFT, Frequency}) ->
+    update_tf(TF, Postings, {IFT, Frequency + 1});
+update_tf(TF, [{IFT,_}|Postings], {LastIFT, Frequency}) ->
+    mi_tf:delta(TF, LastIFT, Frequency),
+    update_tf(TF, Postings, {IFT, 1});
+update_tf(TF, [], {IFT, Frequency}) ->
+    mi_tf:delta(TF, IFT, Frequency),
+    ok.

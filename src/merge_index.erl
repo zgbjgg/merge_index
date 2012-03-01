@@ -41,6 +41,7 @@
     lookup/5, lookup_sync/5,
     range/7, range_sync/7,
     info/4,
+    frequency/4,
     is_empty/1,
     fold/3,
     drop/1,
@@ -65,6 +66,12 @@ index(Server, Postings) -> mi_server:index(Server, Postings).
 -spec info(pid(), index(), field(), mi_term()) ->
                   {ok, [{Term::any(), Weight::integer()}]}.
 info(Server, Index, Field, Term) -> mi_server:info(Server, Index, Field, Term).
+
+%% @doc Return the `Frequency' for the given IFT.
+-spec frequency(string(), index(), field(), mi_term()) -> Frequency::pos_integer().
+
+frequency(Root, Index, Field, Term) ->
+    mi_ft:get(list_to_atom(Root), {Index, Field, Term}).
 
 %% @doc Lookup the results for IFT and return an iterator.  This
 %% allows the caller to process data as it comes in/wants it.
