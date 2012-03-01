@@ -25,6 +25,7 @@
 -author("Rusty Klophaus <rusty@basho.com>").
 -export([
     exists/1,
+    open_read/1,
     open_read/2,
     open_write/1,
     filename/1,
@@ -57,6 +58,9 @@
 exists(Root) ->
     filelib:is_file(data_file(Root)).
 
+open_read(Root) ->
+    open_read(Root, no_tf).
+
 %% Create and return a new segment structure.
 open_read(Root, TF) ->
     %% Create the file if it doesn't exist...
@@ -68,7 +72,10 @@ open_read(Root, TF) ->
 
             OffsetsTable = read_offsets(Root),
 
-            mi_tf:load_file(TF, tf_file(Root)),
+            case TF of
+                no_tf -> ok;
+                _ -> mi_tf:load_file(TF, tf_file(Root))
+            end,
 
             lager:debug("opened segment '~s' for read", [Root]),
             #segment {
