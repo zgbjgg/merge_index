@@ -68,9 +68,9 @@ new(Filename, TF) ->
 
 open_inner(FH, Table, Filename, TF) ->
     case read_value(FH, Filename) of
-        {ok, {Key,_,_,_}=Posting} ->
-            write_to_ets(Table, Posting),
-            mi_tf:delta(TF, Key, 1),
+        {ok, Postings} ->
+            write_to_ets(Table, Postings),
+            update_tf(TF, Postings, {undefined, 0}),
             open_inner(FH, Table, Filename, TF);
         eof ->
             ok
