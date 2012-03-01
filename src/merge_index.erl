@@ -71,7 +71,7 @@ info(Server, Index, Field, Term) -> mi_server:info(Server, Index, Field, Term).
 -spec frequency(string(), index(), field(), mi_term()) -> Frequency::pos_integer().
 
 frequency(Root, Index, Field, Term) ->
-    mi_ft:get(list_to_atom(Root), {Index, Field, Term}).
+    mi_tf:get(list_to_atom(Root), {Index, Field, Term}).
 
 %% @doc Lookup the results for IFT and return an iterator.  This
 %% allows the caller to process data as it comes in/wants it.
