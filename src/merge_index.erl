@@ -63,8 +63,7 @@ stop(Server) -> mi_server:stop(Server).
 index(Server, Postings) -> mi_server:index(Server, Postings).
 
 %% @doc Return a `Weight' for the given IFT.
--spec info(pid(), index(), field(), mi_term()) ->
-                  {ok, [{Term::any(), Weight::integer()}]}.
+-spec info(pid(), index(), field(), mi_term()) -> {ok, Weight::integer()}.
 info(Server, Index, Field, Term) -> mi_server:info(Server, Index, Field, Term).
 
 %% @doc Return the `Frequency' for the given IFT.
