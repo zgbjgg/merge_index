@@ -136,7 +136,7 @@ write(Temp, File) ->
 
 write_entry(File) ->
     fun(Term, Frequency, ok) ->
-            Bin = make_entry(Term, Frequency),
+            Bin = make_entry(term_to_binary(Term), Frequency),
             io:format("File: ~p, K: ~p V: ~p, Bin: ~p~n", [File, Term, Frequency, Bin]),
             ok = file:write(File, Bin)
     end.
@@ -159,7 +159,7 @@ load_entry(Instance, File, Len) ->
     TermLen = Len - 8,
     case file:read(File, Len) of
         {ok, <<Term:TermLen/binary,Frequency:64/integer-unsigned>>} ->
-            delta(Instance, Term, Frequency);
+            delta(Instance, binary_to_term(Term), Frequency);
         eof ->
             {corrupted_tf_file, implement_tf_rebuild}
     end.
