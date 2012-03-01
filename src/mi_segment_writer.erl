@@ -52,6 +52,7 @@
                  compressed_values=false,
                  buffer=[],
                  buffer_size=0,
+                 tf_temp,
 
                  %% We are caching these settings in the #writer state
                  %% to avoid looking them up repeatedly. This saves
@@ -65,14 +66,14 @@
          }).
 
 from_iterator(Iterator, Segment) ->
-    %% Open the data file...
     {ok, DelayedWriteSize} = application:get_env(merge_index, segment_delayed_write_size),
     {ok, DelayedWriteMS} = application:get_env(merge_index, segment_delayed_write_ms),
     {ok, DataFile} = file:open(mi_segment:data_file(Segment), [write, raw, binary, {delayed_write, DelayedWriteSize, DelayedWriteMS}]),
 
     W = #writer {
       data_file=DataFile,
-      offsets_table=Segment#segment.offsets_table
+      offsets_table=Segment#segment.offsets_table,
+      tf_temp=mi_tf:temp(mi_segment:tf_file(Segment))
      },
 
     try
@@ -84,50 +85,78 @@ from_iterator(Iterator, Segment) ->
     end,
     ok.
 
+close_tf(W=#writer{tf_temp=Temp}) ->
+    mi_tf:temp_close(Temp),
+    W.
 
-%% from_iterator_inner/4 - responsible for taking an iterator,
+update_tf(IFT, W=#writer{tf_temp=Temp}) ->
+    W#writer{tf_temp=mi_tf:temp_delta(Temp, IFT, 1)}.
+
+flush_tf(W=#writer{tf_temp=Temp}, false) ->
+    {_, Temp2} = mi_tf:flush(Temp, false),
+    W#writer{tf_temp=Temp2};
+flush_tf(W=#writer{tf_temp=Temp}, true) ->
+    {flush, Temp2} = mi_tf:flush(Temp, true),
+    W#writer{tf_temp=Temp2}.
+
+%% from_iterator/4 - responsible for taking an iterator,
 %% removing duplicate values, and then calling the correct
 %% from_iterator_process_*/N functions, which should update the state variable.
 from_iterator({Entry, Iterator}, StartIFT, LastValue, W)
   when ?INDEX_FIELD_TERM(Entry) == StartIFT andalso
        ?VALUE(Entry) /= LastValue ->
+    %% LOGIC: Still on same IFT but seeing a new value (doc id)
+
     %% Add the next value to the segment.
     W1 = from_iterator_process_value(?VALUE_TSTAMP_PROPS(Entry), W),
-    from_iterator(Iterator(), StartIFT, ?VALUE(Entry), W1);
+    W2 = update_tf(StartIFT, W1),
+
+    from_iterator(Iterator(), StartIFT, ?VALUE(Entry), W2);
 
 from_iterator({Entry, Iterator}, StartIFT, _LastValue, W)
   when ?INDEX_FIELD_TERM(Entry) /= StartIFT andalso StartIFT /= undefined ->
+    %% LOGIC: Starting a new IFT _and_ not at start of iteration
+
     %% Start a new term.
     W1 = from_iterator_process_end_term(StartIFT, W),
-    W2 = from_iterator_process_start_term(?INDEX_FIELD_TERM(Entry), W1),
-    W3 = from_iterator_process_value(?VALUE_TSTAMP_PROPS(Entry), W2),
-    from_iterator(Iterator(), ?INDEX_FIELD_TERM(Entry), ?VALUE(Entry), W3);
+    W2 = flush_tf(W1, false),
+    W3 = from_iterator_process_start_term(?INDEX_FIELD_TERM(Entry), W2),
+    W4 = from_iterator_process_value(?VALUE_TSTAMP_PROPS(Entry), W3),
+    from_iterator(Iterator(), ?INDEX_FIELD_TERM(Entry), ?VALUE(Entry), W4);
 
 from_iterator({Entry, Iterator}, StartIFT, LastValue, W)
   when ?INDEX_FIELD_TERM(Entry) == StartIFT andalso
        ?VALUE(Entry) == LastValue ->
-    %% Eliminate a duplicate value.
+    %% LOGIC: A duplicate value of a given IFT, IIRC we should be
+    %% merging it's property list but we don't (there is a bug
+    %% somewhere on issues.basho.com)
+
     from_iterator(Iterator(), StartIFT, LastValue, W);
 
 from_iterator({Entry, Iterator}, undefined, undefined, W) ->
-    %% Start of segment.
+    %% LOGIC: The start of the iteration
+
     W1 = from_iterator_process_start_segment(W),
     W2 = from_iterator_process_start_term(?INDEX_FIELD_TERM(Entry), W1),
     W3 = from_iterator_process_value(?VALUE_TSTAMP_PROPS(Entry), W2),
     from_iterator(Iterator(), ?INDEX_FIELD_TERM(Entry), ?VALUE(Entry), W3);
 
 from_iterator(eof, undefined, _, W) ->
-    %% End of segment, but we never got any values.
-    W;
+    %% LOGIC: An empty iterator.
+    W2 = close_tf(W),
+    W2;
 
 from_iterator(eof, StartIFT, _LastValue, W) ->
-    %% End of segment.
+    %% LOGIC: The end of segment.
     W1 = from_iterator_process_end_term(StartIFT, W),
     W2 = from_iterator_process_end_segment(W1),
-    W2.
+    W3 = close_tf(W2),
+    W3.
 
 
-%% One method below for each different stage of writing a segment: start_segment, start_block, start_term, value, end_term, end_block, end_segment.
+%% One method below for each different stage of writing a segment:
+%% start_segment, start_block, start_term, value, end_term, end_block,
+%% end_segment.
 
 from_iterator_process_start_segment(W) ->
     W.
@@ -143,6 +172,9 @@ from_iterator_process_start_term(Key, W) ->
     %% If the Index or Field value for this key is different from the
     %% last one, then close the last block and start a new block. This
     %% makes bookkeeping simpler all around.
+    %%
+    %% TODO: I don't see how ShouldStartBlock could ever be true given
+    %% that start_term is called _only_ when the IFT has changed.
     LastKey = W#writer.last_key,
     ShouldStartBlock =
         LastKey == undefined orelse
@@ -177,14 +209,17 @@ from_iterator_process_value(Value, W) ->
             W1
     end.
 
+%% NOTE: Key is IFT
 from_iterator_process_end_term(Key, W) ->
     W1 = from_iterator_write_values(W),
 
     %% Add the key to state...
     KeySize = W1#writer.values_start - W1#writer.key_start,
     ValuesSize = W1#writer.pos - W1#writer.values_start,
+    Count = W1#writer.values_count,
+
     W2 = W1#writer {
-           keys = [{Key, KeySize, ValuesSize, W#writer.values_count}|W#writer.keys]
+           keys = [{Key, KeySize, ValuesSize, Count}|W#writer.keys]
           },
 
     %% If this block is big enough, then close the old block and open
@@ -197,7 +232,7 @@ from_iterator_process_end_term(Key, W) ->
             W2
     end.
 
-
+%% TODO `#writer.keys' is traversed 3 times
 from_iterator_process_end_block(W) when W#writer.keys /= [] ->
     {FinalKey, _, _, _} = hd(W#writer.keys),
 
@@ -214,12 +249,18 @@ from_iterator_process_end_block(W) when W#writer.keys /= [] ->
     {_, _, FinalTerm} = FinalKey,
     F2 = fun({Key, KeySize, ValuesSize, Count}) ->
                  {_, _, Term} = Key,
-                 {mi_utils:edit_signature(FinalTerm, Term), mi_utils:hash_signature(Term), KeySize, ValuesSize, Count}
+                 {mi_utils:edit_signature(FinalTerm, Term),
+                  mi_utils:hash_signature(Term),
+                  KeySize,
+                  ValuesSize,
+                  Count}
         end,
     KeyInfoList = [F2(X) || X <- lists:reverse(W#writer.keys)],
 
     %% Add entry to offsets table...
-    Value = term_to_binary({W#writer.block_start, Bloom, LongestPrefix, KeyInfoList}, [{compressed, 1}]),
+    Value = term_to_binary({W#writer.block_start, Bloom,
+                            LongestPrefix, KeyInfoList},
+                           [{compressed, 1}]),
     Entry = {FinalKey, Value},
     true = ets:insert(W#writer.offsets_table, Entry),
     W;
@@ -229,7 +270,6 @@ from_iterator_process_end_block(W) when W#writer.keys == [] ->
 from_iterator_process_end_segment(W) ->
     W1 = from_iterator_process_end_block(W),
     from_iterator_flush_buffer(W1, true).
-
 
 %% Write a key to the data file.
 from_iterator_write_key(W, Key) ->
@@ -300,4 +340,3 @@ shrink_key({I,_,_}, {I,Field,Term}) ->
     {Field, Term};
 shrink_key(_, {Index,Field,Term}) ->
     {Index, Field, Term}.
-
