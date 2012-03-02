@@ -631,6 +631,8 @@ lookup(Index, Field, Term, {Filter, CandidateSet}, Pid, Ref, Buffers,
             ok;
         _ ->
             Tuples = realize_itr(GroupIterator(), gb_sets:new()),
+            lager:error("lookup CandidateSet: ~p Tuples: ~p",
+                        [CandidateSet, Tuples]),
             Itr = filter_candidates(CandidateSet, Tuples),
             iterate2(Filter, Pid, Ref, undefined, Itr(), []),
             ok
@@ -655,8 +657,10 @@ filter_candidates(Candidates, Tuples) ->
 next_candidate([Candidate|Rest], Tuples) ->
     case gb_sets:is_element(Candidate, Tuples) of
         true ->
+            lager:error("Candidate ~p was found", [Candidate]),
             {Candidate, Rest};
         false ->
+            lager:error("Candidate ~p was NOT found", [Candidate]),
             next_candidate(Rest, Tuples)
     end;
 next_candidate([], _Tuples) ->
