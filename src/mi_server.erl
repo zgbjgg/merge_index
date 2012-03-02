@@ -641,10 +641,15 @@ realize_itr({{_Value, _TS, _Props}=X, Itr}, Acc) ->
 realize_itr(eof, Acc) ->
     Acc.
 
+%% Returns an iterator
 filter_candidates(Candidates, Tuples) ->
     fun() ->
-            {Candidate, Rest} = next_candidate(Candidates, Tuples),
-            {Candidate, filter_candidates(Rest, Tuples)}
+            case next_candidate(Candidates, Tuples) of
+                {Candidate, Rest} ->
+                    {Candidate, filter_candidates(Rest, Tuples)};
+                eof ->
+                    eof
+            end
     end.
 
 next_candidate([Candidate|Rest], Tuples) ->
@@ -653,7 +658,9 @@ next_candidate([Candidate|Rest], Tuples) ->
             {Candidate, Rest};
         false ->
             next_candidate(Rest, Tuples)
-    end.
+    end;
+next_candidate([], _Tuples) ->
+    eof.
 
 range(Index, Field, StartTerm, EndTerm, Size, Filter, Pid, Ref,
       Buffers, Segments) ->
