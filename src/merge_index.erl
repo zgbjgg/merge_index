@@ -81,8 +81,8 @@ frequency(Root, Index, Field, Term) ->
 %%
 %% `Filter' - Function used to filter the results.
 -spec lookup(pid(), index(), field(), mi_term(), function()) -> iterator().
-lookup(Server, Index, Field, Term, Filter) ->
-    {ok, Ref} = mi_server:lookup(Server, Index, Field, Term, Filter),
+lookup(Server, Index, Field, Term, {Filter, CandidateSet}) ->
+    {ok, Ref} = mi_server:lookup(Server, Index, Field, Term, {Filter, CandidateSet}),
     make_result_iterator(Ref).
 
 %% @doc Lookup the results for IFT and return a list.  The caller will

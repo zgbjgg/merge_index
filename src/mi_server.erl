@@ -97,10 +97,11 @@ is_empty(Server) -> gen_server:call(Server, is_empty, infinity).
 
 fold(Server, Fun, Acc) -> gen_server:call(Server, {fold, Fun, Acc}, infinity).
 
-lookup(Server, Index, Field, Term, Filter) ->
+lookup(Server, Index, Field, Term, {Filter, CandidateSet}) ->
     Ref = make_ref(),
     ok = gen_server:call(Server,
-                         {lookup, Index, Field, Term, Filter, self(), Ref},
+                         {lookup, Index, Field, Term, {Filter, CandidateSet},
+                          self(), Ref},
                          infinity),
     {ok, Ref}.
 
@@ -266,7 +267,8 @@ handle_call({info, Index, Field, Term}, _From, State) ->
 
     {reply, {ok, TotalCount}, State};
 
-handle_call({lookup, Index, Field, Term, Filter, Pid, Ref}, _From, State) ->
+handle_call({lookup, Index, Field, Term, {Filter, CandidateSet}, Pid, Ref},
+            _From, State) ->
     %% Get the IDs...
     #state { locks=Locks, buffers=Buffers, segments=Segments } = State,
 
@@ -283,7 +285,7 @@ handle_call({lookup, Index, Field, Term, Filter, Pid, Ref}, _From, State) ->
     NewLocks1 = lists:foldl(F2, NewLocks, Segments),
 
     LPid = spawn_link(?MODULE, lookup,
-                      [Index, Field, Term, Filter, Pid, Ref,
+                      [Index, Field, Term, {Filter, CandidateSet}, Pid, Ref,
                        Buffers, Segments]),
 
     NewPids = [ #stream_range{pid=LPid,
@@ -617,13 +619,35 @@ read_buffers(Root, [{BNum, BName}|Rest], NextID, Segments, TF) ->
     read_buffers(Root, Rest, NextID, [SegmentRO|Segments], TF).
 
 %% Merge-sort the results from Iterators, and stream to the pid.
-lookup(Index, Field, Term, Filter, Pid, Ref, Buffers, Segments) ->
+lookup(Index, Field, Term, {Filter, CandidateSet}, Pid, Ref, Buffers,
+       Segments) ->
     BufferIterators = [mi_buffer:iterator(Index, Field, Term, X) || X <- Buffers],
     SegmentIterators = [mi_segment:iterator(Index, Field, Term, X) || X <- Segments],
     GroupIterator = build_iterator_tree(BufferIterators ++ SegmentIterators),
+    Tuples = realize_itr(GroupIterator(), gb_set:new()),
+    Itr = filter_candidates(CandidateSet, Tuples),
 
-    iterate(Filter, Pid, Ref, undefined, GroupIterator(), []),
+    iterate(Filter, Pid, Ref, undefined, Itr(), []),
     ok.
+
+realize_itr({{_Value, _TS, _Props}=X, Itr}, Acc) ->
+    realize_itr(Itr(), gb_set:add(X, Acc));
+realize_itr(eof, Acc) ->
+    Acc.
+
+filter_candidates(Candidates, Tuples) ->
+    fun() ->
+            {Candidate, Rest} = next_candidate(Candidates, Tuples),
+            {Candidate, filter_candidates(Rest, Tuples)}
+    end.
+
+next_candidate([Candidate|Rest], Tuples) ->
+    case gb_set:is_element(Candidate, Tuples) of
+        true ->
+            {Candidate, Rest};
+        false ->
+            next_candidate(Rest, Tuples)
+    end.
 
 range(Index, Field, StartTerm, EndTerm, Size, Filter, Pid, Ref,
       Buffers, Segments) ->
