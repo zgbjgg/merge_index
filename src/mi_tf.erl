@@ -52,11 +52,13 @@ free(Instance) ->
     ok.
 
 %% @doc Get the `Frequency' of the `Term' for a given `Instance'.
--spec get(mi_instance(), mi_ift()) -> Frequency::pos_integer().
+-spec get(mi_instance(), mi_ift()) -> Frequency::non_neg_integer().
 
 get(Instance, Term) ->
-    [{Term,Frequency}] = ets:lookup(Instance, Term),
-    Frequency.
+    case ets:lookup(Instance, Term) of
+        [{Term,Frequency}] -> Frequency;
+        [] -> 0
+    end.
 
 %% @doc Load term-frequency entries from `Filename' and update
 %% `Instance'.
