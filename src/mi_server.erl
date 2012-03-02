@@ -632,12 +632,12 @@ lookup(Index, Field, Term, {Filter, CandidateSet}, Pid, Ref, Buffers,
         _ ->
             Tuples = realize_itr(GroupIterator(), gb_sets:new()),
             Itr = filter_candidates(CandidateSet, Tuples),
-            iterate(Filter, Pid, Ref, undefined, Itr(), []),
+            iterate2(Filter, Pid, Ref, undefined, Itr(), []),
             ok
     end.
 
-realize_itr({{_Value, _TS, _Props}=X, Itr}, Acc) ->
-    realize_itr(Itr(), gb_sets:add(X, Acc));
+realize_itr({{Value, _TS, Props}, Itr}, Acc) ->
+    realize_itr(Itr(), gb_sets:add({Value, Props}, Acc));
 realize_itr(eof, Acc) ->
     Acc.
 
@@ -687,6 +687,24 @@ iterate(Filter, _Pid, _Ref, LastValue,
             iterate(Filter, _Pid, _Ref, Value, Iter(), Acc)
     end;
 iterate(_, Pid, Ref, _, eof, Acc) ->
+    Pid ! {results, lists:reverse(Acc), Ref},
+    ok.
+
+iterate2(_Filter, Pid, Ref, LastValue, Iterator, Acc)
+  when length(Acc) > ?RESULTVEC_SIZE ->
+    Pid ! {results, lists:reverse(Acc), Ref},
+    iterate2(_Filter, Pid, Ref, LastValue, Iterator, []);
+iterate2(Filter, _Pid, _Ref, LastValue, {{Value, Props}, Iter}, Acc) ->
+    IsDuplicate = (LastValue == Value),
+    IsDeleted = (Props == undefined),
+    case (not IsDuplicate) andalso (not IsDeleted)
+        andalso Filter(Value, Props) of
+        true  ->
+            iterate2(Filter, _Pid, _Ref, Value, Iter(), [{Value, Props}|Acc]);
+        false ->
+            iterate2(Filter, _Pid, _Ref, Value, Iter(), Acc)
+    end;
+iterate2(_, Pid, Ref, _, eof, Acc) ->
     Pid ! {results, lists:reverse(Acc), Ref},
     ok.
 
