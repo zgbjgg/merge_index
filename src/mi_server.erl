@@ -639,7 +639,7 @@ lookup(Index, Field, Term, {Filter, CandidateSet}, Pid, Ref, Buffers,
     end.
 
 realize_itr({{Value, _TS, Props}, Itr}, Acc) ->
-    realize_itr(Itr(), gb_sets:add({Value, Props}, Acc));
+    realize_itr(Itr(), gb_sets:add({Value, []}, Acc));
 realize_itr(eof, Acc) ->
     Acc.
 
@@ -686,7 +686,12 @@ iterate(Filter, _Pid, _Ref, LastValue,
     case (not IsDuplicate) andalso (not IsDeleted)
         andalso Filter(Value, Props) of
         true  ->
-            iterate(Filter, _Pid, _Ref, Value, Iter(), [{Value, Props}|Acc]);
+            %% iterate(Filter, _Pid, _Ref, Value, Iter(), [{Value, Props}|Acc]);
+
+            %% TODO: FIXME: Remove Props to test...can't include props
+            %% becuase candidate set and other queries will have props
+            %% for different field/terms
+            iterate(Filter, _Pid, _Ref, Value, Iter(), [{Value,[]}|Acc]);
         false ->
             iterate(Filter, _Pid, _Ref, Value, Iter(), Acc)
     end;
@@ -704,7 +709,12 @@ iterate2(Filter, _Pid, _Ref, LastValue, {{Value, Props}, Iter}, Acc) ->
     case (not IsDuplicate) andalso (not IsDeleted)
         andalso Filter(Value, Props) of
         true  ->
-            iterate2(Filter, _Pid, _Ref, Value, Iter(), [{Value, Props}|Acc]);
+            %% iterate2(Filter, _Pid, _Ref, Value, Iter(), [{Value, Props}|Acc]);
+
+            %% TODO: FIXME: Remove Props to test...can't include props
+            %% becuase candidate set and other queries will have props
+            %% for different field/terms
+            iterate2(Filter, _Pid, _Ref, Value, Iter(), [{Value,[]}|Acc]);
         false ->
             iterate2(Filter, _Pid, _Ref, Value, Iter(), Acc)
     end;
