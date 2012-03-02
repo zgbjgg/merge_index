@@ -624,14 +624,14 @@ lookup(Index, Field, Term, {Filter, CandidateSet}, Pid, Ref, Buffers,
     BufferIterators = [mi_buffer:iterator(Index, Field, Term, X) || X <- Buffers],
     SegmentIterators = [mi_segment:iterator(Index, Field, Term, X) || X <- Segments],
     GroupIterator = build_iterator_tree(BufferIterators ++ SegmentIterators),
-    Tuples = realize_itr(GroupIterator(), gb_set:new()),
+    Tuples = realize_itr(GroupIterator(), gb_sets:new()),
     Itr = filter_candidates(CandidateSet, Tuples),
 
     iterate(Filter, Pid, Ref, undefined, Itr(), []),
     ok.
 
 realize_itr({{_Value, _TS, _Props}=X, Itr}, Acc) ->
-    realize_itr(Itr(), gb_set:add(X, Acc));
+    realize_itr(Itr(), gb_sets:add(X, Acc));
 realize_itr(eof, Acc) ->
     Acc.
 
@@ -642,7 +642,7 @@ filter_candidates(Candidates, Tuples) ->
     end.
 
 next_candidate([Candidate|Rest], Tuples) ->
-    case gb_set:is_element(Candidate, Tuples) of
+    case gb_sets:is_element(Candidate, Tuples) of
         true ->
             {Candidate, Rest};
         false ->
