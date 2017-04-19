@@ -44,7 +44,9 @@
     is_empty/1,
     fold/3,
     drop/1,
-    compact/1
+    compact/1,
+    make_result_list/1,
+    make_result_iterator/1
 ]).
 
 -type(index() :: any()).
